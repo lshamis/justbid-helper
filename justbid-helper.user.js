@@ -12,49 +12,93 @@
 (function() {
   'use strict';
 
-  // Mock the browser.storage.local API using localStorage
+  // Safe storage implementation with memory fallback
+  let storageImpl = {
+    getItem: (key) => null,
+    setItem: (key, val) => {},
+    removeItem: (key) => {},
+    getLength: () => 0,
+    getKey: (index) => null
+  };
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      storageImpl = {
+        getItem: (key) => localStorage.getItem(key),
+        setItem: (key, val) => localStorage.setItem(key, val),
+        removeItem: (key) => localStorage.removeItem(key),
+        getLength: () => localStorage.length,
+        getKey: (index) => localStorage.key(index)
+      };
+    }
+  } catch (e) {
+    console.warn("JustBid Helper: localStorage is not accessible. Using in-memory fallback.", e);
+    const memStore = {};
+    storageImpl = {
+      getItem: (key) => memStore[key] || null,
+      setItem: (key, val) => { memStore[key] = String(val); },
+      removeItem: (key) => { delete memStore[key]; },
+      getLength: () => Object.keys(memStore).length,
+      getKey: (index) => Object.keys(memStore)[index] || null
+    };
+  }
+
+  // Mock the browser.storage.local API using storageImpl
   const browser = {
     storage: {
       local: {
         get: async function(keys) {
-          if (keys === null) {
-            const result = {};
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key.startsWith("jb_")) {
-                try {
-                  result[key.slice(3)] = JSON.parse(localStorage.getItem(key));
-                } catch (e) {}
+          try {
+            if (keys === null) {
+              const result = {};
+              const len = storageImpl.getLength();
+              for (let i = 0; i < len; i++) {
+                const key = storageImpl.getKey(i);
+                if (key && key.startsWith("jb_")) {
+                  try {
+                    result[key.slice(3)] = JSON.parse(storageImpl.getItem(key));
+                  } catch (e) {}
+                }
               }
+              return result;
             }
-            return result;
-          }
-          if (typeof keys === "string") {
-            const val = localStorage.getItem("jb_" + keys);
-            return val ? { [keys]: JSON.parse(val) } : {};
-          }
-          if (Array.isArray(keys)) {
-            const result = {};
-            for (const k of keys) {
-              const val = localStorage.getItem("jb_" + k);
-              if (val) result[k] = JSON.parse(val);
+            if (typeof keys === "string") {
+              const val = storageImpl.getItem("jb_" + keys);
+              return val ? { [keys]: JSON.parse(val) } : {};
             }
-            return result;
+            if (Array.isArray(keys)) {
+              const result = {};
+              for (const k of keys) {
+                const val = storageImpl.getItem("jb_" + k);
+                if (val) result[k] = JSON.parse(val);
+              }
+              return result;
+            }
+          } catch (e) {
+            console.error("JustBid Helper: Error reading from storage", e);
           }
           return {};
         },
         set: async function(obj) {
-          for (const [k, v] of Object.entries(obj)) {
-            localStorage.setItem("jb_" + k, JSON.stringify(v));
+          try {
+            for (const [k, v] of Object.entries(obj)) {
+              storageImpl.setItem("jb_" + k, JSON.stringify(v));
+            }
+          } catch (e) {
+            console.error("JustBid Helper: Error writing to storage", e);
           }
         },
         remove: async function(keys) {
-          if (typeof keys === "string") {
-            localStorage.removeItem("jb_" + keys);
-          } else if (Array.isArray(keys)) {
-            for (const k of keys) {
-              localStorage.removeItem("jb_" + k);
+          try {
+            if (typeof keys === "string") {
+              storageImpl.removeItem("jb_" + keys);
+            } else if (Array.isArray(keys)) {
+              for (const k of keys) {
+                storageImpl.removeItem("jb_" + k);
+              }
             }
+          } catch (e) {
+            console.error("JustBid Helper: Error removing from storage", e);
           }
         }
       }
@@ -67,6 +111,7 @@
    */
 
   const CACHE_LIFETIME = 14 * 24 * 60 * 60 * 1000; // 14 days in ms
+  const pendingFetches = new Map();
 
   async function getCachedCondition(url) {
     try {
@@ -81,7 +126,7 @@
         }
       }
     } catch (e) {
-      console.error("JustBid Helper: Error reading from storage", e);
+      console.error("JustBid Helper: Error checking cached condition", e);
     }
     return null;
   }
@@ -95,7 +140,7 @@
         }
       });
     } catch (e) {
-      console.error("JustBid Helper: Error writing to storage", e);
+      console.error("JustBid Helper: Error caching condition", e);
     }
   }
 
@@ -124,33 +169,48 @@
     const cached = await getCachedCondition(url);
     if (cached) return cached;
     
-    try {
-      const response = await fetch(url);
-      const html = await response.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, "text/html");
-      
-      const conditions = ["Appears New", "Open Box", "Pre-Owned", "Damaged", "Used", "As-Is"];
-      const pageText = doc.body.innerText;
-      
-      const found = conditions.find(c => {
-          const regex = new RegExp(`Condition:\\s*${c}|${c}`, 'i');
-          return regex.test(pageText);
-      });
-      
-      const result = found || "Unknown";
-      await setCachedCondition(url, result);
-      return result;
-    } catch (e) {
-      console.error(`JustBid Helper: Error fetching ${url}`, e);
-      return "Error";
+    // Reuse existing fetch promise if already loading
+    if (pendingFetches.has(url)) {
+      return pendingFetches.get(url);
     }
+
+    const fetchPromise = (async () => {
+      try {
+        // Prevent mixed content blocks if site uses secure protocol
+        let fetchUrl = url;
+        if (url.startsWith("http:") && location.protocol === "https:") {
+          fetchUrl = url.replace("http:", "https:");
+        }
+
+        const response = await fetch(fetchUrl);
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        
+        const conditions = ["Appears New", "Open Box", "Pre-Owned", "Damaged", "Used", "As-Is"];
+        const pageText = doc.body.innerText;
+        
+        const found = conditions.find(c => {
+            const regex = new RegExp(`Condition:\\s*${c}|${c}`, 'i');
+            return regex.test(pageText);
+        });
+        
+        const result = found || "Unknown";
+        await setCachedCondition(url, result);
+        return result;
+      } catch (e) {
+        console.error(`JustBid Helper: Error fetching ${url}`, e);
+        return "Error";
+      } finally {
+        pendingFetches.delete(url);
+      }
+    })();
+
+    pendingFetches.set(url, fetchPromise);
+    return fetchPromise;
   }
 
   async function processItem(link, preFetchedCondition = null) {
-    // Mark as processed immediately to prevent duplicate runs
-    link.setAttribute('data-justbid-processed', link.href);
-
     // Find the card container for this link
     const card = link.closest('div[class*="border"], div[class*="rounded"], div.grid > div') || link.parentElement;
     if (!card) return;
@@ -218,31 +278,26 @@
   async function filterJustBidItems() {
     console.log("JustBid Helper: Scanning for item links...");
     
-    // Only select links that haven't been processed yet for their current URL
+    // Grab all target links on the page that don't match their currently processed state
     const itemLinks = Array.from(document.querySelectorAll('a[href*="/item/"], a[href*="/products/"]'))
       .filter(link => link.getAttribute('data-justbid-processed') !== link.href);
-      
-    const uniqueLinks = [];
-    const seenUrls = new Set();
-    for (const link of itemLinks) {
-      if (!seenUrls.has(link.href)) {
-        seenUrls.add(link.href);
-        uniqueLinks.push(link);
-      }
-    }
 
-    console.log(`JustBid Helper: Found ${uniqueLinks.length} unique item links.`);
+    console.log(`JustBid Helper: Found ${itemLinks.length} new item links to process.`);
+    if (itemLinks.length === 0) return;
 
-    // Load all cache at once to avoid multiple async calls
+    // Load cache
     const cache = await browser.storage.local.get(null);
     const now = Date.now();
     
     let networkRequestIndex = 0;
 
-    for (const link of uniqueLinks) {
+    for (const link of itemLinks) {
       const url = link.href;
-      const cachedEntry = cache[url];
       
+      // Mark as processed synchronously to prevent duplicate scans
+      link.setAttribute('data-justbid-processed', url);
+
+      const cachedEntry = cache[url];
       if (cachedEntry && (now - cachedEntry.timestamp < CACHE_LIFETIME)) {
         // Highlight immediately if cached
         processItem(link, cachedEntry.condition);
@@ -298,9 +353,18 @@
 
   // 3. Keep the MutationObserver for added nodes
   const observer = new MutationObserver((mutations) => {
-    // Trigger if any nodes are added (such as infinite scroll elements on mobile)
-    const hasAddedNodes = mutations.some(m => m.addedNodes && m.addedNodes.length > 0);
-    if (hasAddedNodes) {
+    // Trigger if any external nodes are added (such as infinite scroll elements on mobile)
+    const hasExternalAddedNodes = mutations.some(m => {
+      if (!m.addedNodes || m.addedNodes.length === 0) return false;
+      return Array.from(m.addedNodes).some(node => {
+        // Ignore if the node is our own overlay or is contained inside it
+        if (node.classList && node.classList.contains('justbid-condition-overlay')) return false;
+        if (node.parentNode && node.parentNode.classList && node.parentNode.classList.contains('justbid-condition-overlay')) return false;
+        return true;
+      });
+    });
+
+    if (hasExternalAddedNodes) {
       triggerFilter();
     }
   });
