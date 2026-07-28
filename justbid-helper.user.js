@@ -148,6 +148,9 @@
   }
 
   async function processItem(link, preFetchedCondition = null) {
+    // Mark as processed immediately to prevent duplicate runs
+    link.setAttribute('data-justbid-processed', link.href);
+
     // Find the card container for this link
     const card = link.closest('div[class*="border"], div[class*="rounded"], div.grid > div') || link.parentElement;
     if (!card) return;
@@ -215,7 +218,10 @@
   async function filterJustBidItems() {
     console.log("JustBid Helper: Scanning for item links...");
     
-    const itemLinks = Array.from(document.querySelectorAll('a[href*="/item/"], a[href*="/products/"]'));
+    // Only select links that haven't been processed yet for their current URL
+    const itemLinks = Array.from(document.querySelectorAll('a[href*="/item/"], a[href*="/products/"]'))
+      .filter(link => link.getAttribute('data-justbid-processed') !== link.href);
+      
     const uniqueLinks = [];
     const seenUrls = new Set();
     for (const link of itemLinks) {
@@ -292,9 +298,9 @@
 
   // 3. Keep the MutationObserver for added nodes
   const observer = new MutationObserver((mutations) => {
-    // If we see a significant number of new items, trigger a filter
-    const addedNodesCount = mutations.reduce((acc, m) => acc + m.addedNodes.length, 0);
-    if (addedNodesCount > 3) {
+    // Trigger if any nodes are added (such as infinite scroll elements on mobile)
+    const hasAddedNodes = mutations.some(m => m.addedNodes && m.addedNodes.length > 0);
+    if (hasAddedNodes) {
       triggerFilter();
     }
   });
