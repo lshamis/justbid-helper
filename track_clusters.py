@@ -1179,11 +1179,9 @@ def generate_html_report(
 ) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    status_rank = {"NEW": 0, "GROWING": 1, "ONGOING": 2}
     ordered = sorted(
         clusters,
         key=lambda c: (
-            status_rank.get(c.get("status", "ONGOING"), 9),
             -c["count"],
             -(c["median_retail"] or 0),
         ),
@@ -1269,14 +1267,12 @@ def generate_html_report(
             default=9999999999,
         )
         locs_pipe = html_lib.escape("|" + "|".join(cl["locations"].keys()) + "|")
-        s_rank = status_rank.get(status, 9)
         new_cnt = cl.get("new_item_count") or 0
 
         cards_html.append(
             f"""
             <article class="card"
               data-status="{status}"
-              data-status-rank="{s_rank}"
               data-count="{cl['count']}"
               data-new-count="{new_cnt}"
               data-retail="{median_retail_num}"
@@ -1413,7 +1409,6 @@ def generate_html_report(
       </div>
       <div class="controls">
         <select id="sortBy" class="ctrl-select" title="Sort clusters">
-          <option value="default">Sort: Status + Most Units</option>
           <option value="units_desc">Sort: Most Units</option>
           <option value="retail_desc">Sort: Highest Retail $</option>
           <option value="retail_asc">Sort: Lowest Retail $</option>
@@ -1487,10 +1482,6 @@ def generate_html_report(
     function applySort() {{
       const mode = sortBy.value;
       const cmp = {{
-        default: (a, b) =>
-          (a.dataset.statusRank - b.dataset.statusRank) ||
-          (b.dataset.count - a.dataset.count) ||
-          (b.dataset.retail - a.dataset.retail),
         units_desc: (a, b) =>
           (b.dataset.count - a.dataset.count) || (b.dataset.retail - a.dataset.retail),
         retail_desc: (a, b) =>
@@ -1534,7 +1525,7 @@ def generate_html_report(
       minRetail.value = '';
       maxRetail.value = '';
       maxBid.value = '';
-      sortBy.value = 'default';
+      sortBy.value = 'units_desc';
       applySort();
       applyFilter();
     }});
