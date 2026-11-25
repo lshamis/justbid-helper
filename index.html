@@ -1,141 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>JustBid Helper Setup</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JustBid Tools</title>
   <style>
-    body {
-      font-family: "Times New Roman", Times, serif;
-      background-color: #ffffff;
-      color: #000000;
-      max-width: 650px;
-      margin: 30px auto;
-      padding: 20px;
-      border: 3px double #000000;
-    }
-    
-    h1 {
-      color: #000080;
-      text-align: center;
-      border-bottom: 2px solid #000080;
-      padding-bottom: 10px;
-      margin-top: 0;
-    }
-
-    .intro {
-      font-size: 18px;
-      line-height: 1.4;
-      margin-bottom: 25px;
-    }
-
-    .step-box {
-      margin: 20px 0;
-      padding: 15px;
-      border: 2px outset #ffffff;
-      background-color: #f0f0f0;
-    }
-
-    .step-title {
-      font-size: 20px;
-      font-weight: bold;
-      color: #800000;
-      margin-bottom: 10px;
-      text-decoration: underline;
-    }
-
-    .btn {
-      display: inline-block;
-      background-color: #d4d0c8;
-      color: #000000;
-      border-top: 2px solid #ffffff;
-      border-left: 2px solid #ffffff;
-      border-right: 2px solid #808080;
-      border-bottom: 2px solid #808080;
-      padding: 8px 16px;
-      text-decoration: none;
-      font-family: Arial, sans-serif;
-      font-size: 15px;
-      font-weight: bold;
-      margin: 8px 0;
-    }
-
-    .btn:active {
-      border-top: 2px solid #808080;
-      border-left: 2px solid #808080;
-      border-right: 2px solid #ffffff;
-      border-bottom: 2px solid #ffffff;
-    }
-
-    .btn-green {
-      background-color: #c0ecc0;
-    }
-
-    p {
-      font-size: 16px;
-      margin: 10px 0;
-    }
-
-    strong {
-      color: #000000;
-    }
-
-    .footer {
-      margin-top: 40px;
-      text-align: center;
-      font-size: 12px;
-      color: #555555;
-      border-top: 1px dashed #808080;
-      padding-top: 10px;
-    }
+    :root { --bg: #f6f7f9; --card: #fff; --border: #e2e8f0; --text: #0f172a; --muted: #64748b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: #0f172a; color: #fff; padding: 28px 24px; text-align: center; }
+    header h1 { margin: 0 0 6px; font-size: 26px; }
+    header p { margin: 0; color: #94a3b8; font-size: 15px; }
+    .wrap { max-width: 780px; margin: 32px auto; padding: 0 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; text-decoration: none; color: inherit; transition: border-color .15s, box-shadow .15s; }
+    .card:hover { border-color: #2563eb; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08); }
+    .card h2 { margin: 0 0 8px; font-size: 19px; color: #0f172a; }
+    .card p { margin: 0 0 16px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+    .cta { font-size: 14px; font-weight: 600; color: #2563eb; }
   </style>
 </head>
 <body>
-
-  <h1>🪄 JustBid Helper Setup</h1>
-  
-  <p class="intro">
-    This page helps you set up a tool that automatically highlights good items on JustBid.com. 
-    It will put a <strong>bright green border</strong> around items that are "Appears New", and mark others in red.
-  </p>
-
-  <div class="step-box">
-    <div class="step-title">Step 1: Install the Helper Extension</div>
-    <p>First, you must add a helper to your web browser. Click the button below that matches the browser you use:</p>
-    
-    <p>
-      <a href="https://chromewebstore.google.com/detail/violentmonkey/jinjaccalgkegednnccohejagnlnfdag" target="_blank" class="btn">Click Here for Google Chrome (or Brave)</a>
-    </p>
-    
-    <p>
-      <a href="https://addons.mozilla.org/en-US/firefox/addon/violentmonkey/" target="_blank" class="btn">Click Here for Firefox</a>
-    </p>
-    
-    <p>
-      <em>Note: When the page opens, click the blue button that says <strong>"Add to Chrome"</strong> or <strong>"Add to Firefox"</strong>, then click "Add extension" on the popup alert.</em>
-    </p>
-  </div>
-
-  <div class="step-box">
-    <div class="step-title">Step 2: Add the JustBid Helper Script</div>
-    <p>After you finish Step 1, click the green button below:</p>
-    
-    <p>
-      <a href="justbid-helper.user.js" class="btn btn-green">Click Here to Install the JustBid Helper Script</a>
-    </p>
-    
-    <p>
-      <em>Note: A new screen will open. Look for a button that says <strong>"Confirm Installation"</strong> (usually near the top or left) and click it. Once it says "Installed", you can close that tab.</em>
-    </p>
-  </div>
-
-  <div class="step-box" style="background-color: #e8f0fe;">
-    <div class="step-title" style="color: #000080;">Step 3: Go Shopping!</div>
-    <p>You are done! Now open a new tab and go to <a href="https://www.justbid.com" target="_blank" style="color: #0000ee; font-weight: bold; text-decoration: underline;">www.justbid.com</a>. The helper will work automatically in the background.</p>
-  </div>
-
-  <div class="footer">
-    JustBid Helper Project Page.
-  </div>
-
+  <header>
+    <h1>JustBid Tools</h1>
+    <p>Daily CA liquidation cluster tracker &amp; browser condition helper</p>
+  </header>
+  <main class="wrap">
+    <a class="card" href="bulk/">
+      <div>
+        <h2>📦 Daily Bulk Deals (CA)</h2>
+        <p>Updated twice daily (6 AM &amp; 10 AM PST). Clusters multi-unit liquidations across California pickup locations using image + title matching, highlighting new and growing batches.</p>
+      </div>
+      <div class="cta">Open Bulk Deals →</div>
+    </a>
+    <a class="card" href="extension/">
+      <div>
+        <h2>🪄 Condition Helper Extension</h2>
+        <p>Browser userscript that highlights "Appears New" listings in green and dims Open Box / Used / Damaged items while browsing JustBid.com.</p>
+      </div>
+      <div class="cta">Setup Instructions →</div>
+    </a>
+  </main>
 </body>
 </html>

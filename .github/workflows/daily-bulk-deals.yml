@@ -1,0 +1,96 @@
+name: Daily JustBid Bulk Deals
+
+on:
+  schedule:
+    # Runs daily at 6:00 AM and 10:00 AM PST (14:00 and 18:00 UTC)
+    - cron: "0 14,18 * * *"
+  workflow_dispatch:
+    inputs:
+      full_sync:
+        description: "Force a full CA catalog re-scan instead of incremental sync"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore tracker.db from rolling release (data-latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          if gh release download data-latest -p "tracker.db.gz" -D data --clobber 2>/dev/null; then
+            gunzip -f data/tracker.db.gz
+            ls -lh data/tracker.db
+          else
+            echo "No existing tracker.db.gz in data-latest release; starting fresh backfill."
+          fi
+
+      - name: Sync CA catalog and generate daily cluster report
+        run: |
+          EXTRA_ARGS=""
+          if [ "${{ inputs.full_sync }}" = "true" ]; then
+            EXTRA_ARGS="--full-sync"
+          fi
+          python3 track_clusters.py --top 15 $EXTRA_ARGS
+
+      - name: Save tracker.db to rolling release (data-latest)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gzip -kf data/tracker.db
+          if ! gh release view data-latest >/dev/null 2>&1; then
+            gh release create data-latest data/tracker.db.gz \
+              --title "JustBid Tracker State (Rolling)" \
+              --notes "Rolling SQLite state for incremental JustBid CA bulk-deal tracking. Overwritten on each scheduled run." \
+              --prerelease
+          else
+            gh release upload data-latest data/tracker.db.gz --clobber
+          fi
+
+      - name: Assemble GitHub Pages site
+        run: |
+          mkdir -p _site/bulk _site/extension
+          cp index.html _site/index.html
+          cp justbid-helper.user.js _site/justbid-helper.user.js
+          cp extension/index.html _site/extension/index.html
+          cp -L data/reports/latest.html _site/bulk/index.html
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
