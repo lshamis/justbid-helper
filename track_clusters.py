@@ -627,6 +627,8 @@ class ClusterTrackerDB:
         }
         if "canonical_phash" not in kc_cols:
             self.conn.execute("ALTER TABLE known_clusters ADD COLUMN canonical_phash TEXT")
+        if "first_seen_ts" not in kc_cols:
+            self.conn.execute("ALTER TABLE known_clusters ADD COLUMN first_seen_ts INTEGER")
 
         self.conn.commit()
 
@@ -738,6 +740,7 @@ class ClusterTrackerDB:
                 {
                     "cluster_id": r["cluster_id"],
                     "first_seen_date": r["first_seen_date"],
+                    "first_seen_ts": r["first_seen_ts"],
                     "last_seen_date": r["last_seen_date"],
                     "canonical_title": r["canonical_title"],
                     "canonical_norm": r["canonical_norm"],
@@ -758,10 +761,13 @@ class ClusterTrackerDB:
         total_items: int,
         similarity_threshold: float = 0.78,
         max_hamming: int = 6,
+        window_hours: int = 24,
         dry_run: bool = False,
     ) -> dict[str, Any]:
         is_first_run = self.run_count() == 0
         known = self.load_known_clusters()
+        now_ts = int(time.time())
+        cutoff_ts = now_ts - window_hours * 3600
 
         item_to_known: dict[str, int] = {}
         for idx, kc in enumerate(known):
@@ -785,6 +791,13 @@ class ClusterTrackerDB:
 
         for cl in clusters:
             cl_item_ids = set(cl["item_ids"])
+            starts = [
+                int(it["start_timestamp"])
+                for it in cl["items"]
+                if it.get("start_timestamp")
+            ]
+            oldest_start_ts = min(starts) if starts else now_ts
+            recent_items_count = sum(1 for ts in starts if ts >= cutoff_ts)
 
             # 1. Match by shared item_ids first
             overlap_counts: Counter[int] = Counter()
@@ -825,22 +838,35 @@ class ClusterTrackerDB:
                         best_k_idx = k_idx
 
             if best_k_idx is None:
-                cl["status"] = "NEW"
-                cl["first_seen_date"] = run_date
-                cl["new_item_count"] = cl["count"]
+                first_seen_ts = oldest_start_ts
+                first_seen_date = datetime.fromtimestamp(
+                    first_seen_ts, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+                cl["first_seen_date"] = first_seen_date
                 cl["prev_count"] = 0
-                new_count += 1
+                cl["new_item_count"] = recent_items_count
+
+                if first_seen_ts >= cutoff_ts:
+                    cl["status"] = "NEW"
+                    new_count += 1
+                elif recent_items_count > 0:
+                    cl["status"] = "GROWING"
+                    growing_count += 1
+                else:
+                    cl["status"] = "ONGOING"
+
                 if not dry_run:
                     cur = self.conn.execute(
                         """
                         INSERT INTO known_clusters (
-                            first_seen_date, last_seen_date, canonical_title,
-                            canonical_norm, canonical_phash, peak_count,
-                            last_count, seen_item_ids_json
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            first_seen_date, first_seen_ts, last_seen_date,
+                            canonical_title, canonical_norm, canonical_phash,
+                            peak_count, last_count, seen_item_ids_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            run_date,
+                            first_seen_date,
+                            first_seen_ts,
                             run_date,
                             cl["canonical_title"],
                             cl["canonical_norm"],
@@ -854,13 +880,25 @@ class ClusterTrackerDB:
             else:
                 matched_known_idxs.add(best_k_idx)
                 kc = known[best_k_idx]
-                added_ids = cl_item_ids - kc["seen_item_ids"]
-                cl["cluster_id"] = kc["cluster_id"]
-                cl["first_seen_date"] = kc["first_seen_date"]
-                cl["prev_count"] = kc["last_count"]
-                cl["new_item_count"] = len(added_ids)
+                prev_ts = kc.get("first_seen_ts")
+                first_seen_ts = (
+                    min(prev_ts, oldest_start_ts)
+                    if prev_ts is not None
+                    else oldest_start_ts
+                )
+                first_seen_date = datetime.fromtimestamp(
+                    first_seen_ts, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
 
-                if len(added_ids) > 0:
+                cl["cluster_id"] = kc["cluster_id"]
+                cl["first_seen_date"] = first_seen_date
+                cl["prev_count"] = kc["last_count"]
+                cl["new_item_count"] = recent_items_count
+
+                if first_seen_ts >= cutoff_ts:
+                    cl["status"] = "NEW"
+                    new_count += 1
+                elif recent_items_count > 0:
                     cl["status"] = "GROWING"
                     growing_count += 1
                 else:
@@ -872,7 +910,9 @@ class ClusterTrackerDB:
                     self.conn.execute(
                         """
                         UPDATE known_clusters
-                        SET last_seen_date = ?,
+                        SET first_seen_date = ?,
+                            first_seen_ts = ?,
+                            last_seen_date = ?,
                             canonical_title = ?,
                             canonical_norm = ?,
                             canonical_phash = COALESCE(?, canonical_phash),
@@ -882,6 +922,8 @@ class ClusterTrackerDB:
                         WHERE cluster_id = ?
                         """,
                         (
+                            first_seen_date,
+                            first_seen_ts,
                             run_date,
                             cl["canonical_title"],
                             cl["canonical_norm"],
@@ -916,6 +958,7 @@ class ClusterTrackerDB:
             "is_first_run": is_first_run,
             "run_date": run_date,
             "fetched_at": fetched_at,
+            "window_hours": window_hours,
             "total_items": total_items,
             "total_clusters": len(clusters),
             "new_clusters": new_count,
@@ -1314,12 +1357,8 @@ def generate_html_report(
         for loc in all_locs
     )
 
-    first_run_banner = (
-        '<div class="banner">Baseline run — all clusters recorded for the first time. '
-        "Future daily runs will highlight only newly appearing and growing clusters.</div>"
-        if summary["is_first_run"]
-        else ""
-    )
+    win_h = summary.get("window_hours", 24)
+    first_run_banner = ""
 
     page_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1395,15 +1434,15 @@ def generate_html_report(
     <div class="stats">
       <div class="stat"><div class="num">{summary['total_items']:,}</div><div class="lbl">Active CA Items</div></div>
       <div class="stat"><div class="num">{summary['total_clusters']:,}</div><div class="lbl">Total Clusters</div></div>
-      <div class="stat"><div class="num" style="color:#16a34a">{summary['new_clusters']:,}</div><div class="lbl">New Today</div></div>
-      <div class="stat"><div class="num" style="color:#d97706">{summary['growing_clusters']:,}</div><div class="lbl">Growing Today</div></div>
+      <div class="stat"><div class="num" style="color:#16a34a">{summary['new_clusters']:,}</div><div class="lbl">New ({win_h}h)</div></div>
+      <div class="stat"><div class="num" style="color:#d97706">{summary['growing_clusters']:,}</div><div class="lbl">Growing ({win_h}h)</div></div>
       <div class="stat"><div class="num">{summary['ongoing_clusters']:,}</div><div class="lbl">Ongoing</div></div>
     </div>
     <div class="toolbar">
       <div class="controls">
         <button class="tab active" data-filter="ALL">All ({summary['total_clusters']})</button>
-        <button class="tab" data-filter="NEW">New ({summary['new_clusters']})</button>
-        <button class="tab" data-filter="GROWING">Growing ({summary['growing_clusters']})</button>
+        <button class="tab" data-filter="NEW">New {win_h}h ({summary['new_clusters']})</button>
+        <button class="tab" data-filter="GROWING">Growing {win_h}h ({summary['growing_clusters']})</button>
         <button class="tab" data-filter="ONGOING">Ongoing ({summary['ongoing_clusters']})</button>
         <input id="search" class="ctrl-input" type="search" placeholder="Search title, variant, or location..." />
       </div>
@@ -1644,6 +1683,12 @@ def main() -> int:
         help="Optional per-request delay in seconds for catalog pages",
     )
     parser.add_argument(
+        "--window-hours",
+        type=int,
+        default=24,
+        help="Rolling time window in hours for NEW and GROWING badges (default: 24)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Do not record this run into cluster history",
@@ -1717,6 +1762,7 @@ def main() -> int:
             total_items=len(items),
             similarity_threshold=args.similarity,
             max_hamming=args.image_hamming,
+            window_hours=args.window_hours,
             dry_run=args.dry_run,
         )
     finally:
