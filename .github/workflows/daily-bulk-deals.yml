@@ -2,8 +2,8 @@ name: Daily JustBid Bulk Deals
 
 on:
   schedule:
-    # Runs daily at 6:00 AM and 10:00 AM PST (14:00 and 18:00 UTC)
-    - cron: "0 14,18 * * *"
+    # Runs every 2 hours
+    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       full_sync:
